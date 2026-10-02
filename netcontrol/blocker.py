@@ -38,7 +38,7 @@ class Blocker:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self.portal = Portal(info.own_ip)
+        self.portal = Portal(info.own_ip, info.iface)
 
     # ---- API pública -------------------------------------------------
     def start(self):

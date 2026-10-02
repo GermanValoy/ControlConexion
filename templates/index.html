@@ -85,8 +85,8 @@
   <div class="wrap">
     {% if dry_run %}<div class="dry">⚠️ MODO SIMULACIÓN — no se afecta la red real</div>{% endif %}
     {% if not portal_ok and not dry_run %}
-    <div class="note">ℹ️ El mensaje personalizado requiere Linux (con iptables).
-      En este sistema el bloqueo funciona igual (corte total), pero sin la página de mensaje.</div>
+    <div class="note">ℹ️ No se pudo iniciar el servidor de mensaje. El bloqueo
+      funciona igual (corte total), pero sin la página de mensaje.</div>
     {% endif %}
 
     <div class="tabs">

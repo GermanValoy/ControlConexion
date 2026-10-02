@@ -1,35 +1,32 @@
-"""Portal cautivo: muestra un mensaje personalizado en el equipo bloqueado.
+"""Portal cautivo multiplataforma: muestra un mensaje en el equipo bloqueado.
 
-Mecanismo (solo Linux, requiere root):
-  - El equipo ya cree que somos el router (ARP spoofing del Blocker).
-  - Activamos reenvío IP y, con iptables, redirigimos SU tráfico:
-      * DNS (53)  -> nuestro mini-servidor DNS (responde todo con nuestra IP)
-      * HTTP (80) -> nuestro mini-servidor web (muestra tu mensaje)
-      * el resto  -> descartado
-  - Resultado: al abrir el navegador (o al saltar el aviso de "iniciar sesión
-    en la red"), tu hijo ve tu mensaje. Las webs HTTPS simplemente no cargan.
+Mecanismo (Windows / macOS / Linux, requiere privilegios de administrador):
+  - El equipo ya cree que somos el router (ARP spoofing del Blocker) y NO
+    reenviamos su tráfico, así que queda sin internet.
+  - Además, con Scapy escuchamos sus consultas DNS y le respondemos que
+    CUALQUIER dominio apunta a NUESTRA IP (DNS spoofing).
+  - Cuando su navegador abre una página (o salta el aviso de "iniciar sesión
+    en la red"), llega a nuestro mini-servidor web, que muestra tu mensaje.
 
-En Windows/macOS no se aplica el portal: el bloqueo funciona igual (corte
-total), pero sin la página de mensaje. Ver README.
+No necesita iptables ni drivers extra además de Npcap (en Windows). Las webs
+HTTPS no mostrarán el mensaje (el navegador dirá que no hay conexión); el
+mensaje aparece claro en el aviso de red del celular y en cualquier web http://.
 """
 from __future__ import annotations
 
 import os
-import socket
-import struct
-import subprocess
-import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Optional
+from typing import Callable, Optional
 
-HTTP_PORT = 8081
-DNS_PORT = 5353
-NAT_CHAIN = "CONEXION_NAT"
-FWD_CHAIN = "CONEXION_FWD"
+from scapy.all import DNS, DNSRR, IP, UDP, Ether, sendp, sniff
 
-# mensajes compartidos: ip_del_equipo -> texto
-_messages: dict[str, str] = {}
+# Puerto del servidor de mensaje. Debe ser 80 porque el navegador del equipo
+# bloqueado abrirá http://<dominio> (puerto 80 por defecto), que vía DNS
+# spoofing resuelve a nuestra IP.
+HTTP_PORT = int(os.environ.get("CONTROL_PORTAL_PORT", "80"))
+
+_messages: dict[str, str] = {}      # ip_del_equipo -> texto
 _messages_lock = threading.Lock()
 
 
@@ -70,8 +67,7 @@ p{{font-size:1.25rem;line-height:1.5;white-space:pre-wrap;margin:0}}
 
 class _MsgHandler(BaseHTTPRequestHandler):
     def _serve(self):
-        msg = _message_for(self.client_address[0])
-        body = _page(msg)
+        body = _page(_message_for(self.client_address[0]))
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -80,209 +76,130 @@ class _MsgHandler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def do_GET(self):
-        self._serve()
-
-    def do_HEAD(self):
-        self._serve()
-
-    def do_POST(self):
-        self._serve()
+    do_GET = do_HEAD = do_POST = _serve
 
     def log_message(self, *a):
-        pass  # silencio
+        pass
 
 
-def _dns_response(data: bytes, answer_ip: str) -> Optional[bytes]:
-    """Responde cualquier consulta A con `answer_ip`. Minimalista pero válido."""
-    if len(data) < 12:
+def build_dns_reply(pkt, answer_ip: str):
+    """Construye una respuesta DNS que apunta cualquier dominio a `answer_ip`.
+
+    Función pura (sin red) para poder probarla. Devuelve el paquete a enviar
+    o None si el paquete no es una consulta DNS válida.
+    """
+    if not pkt.haslayer(DNS) or pkt.haslayer(Ether) is False:
         return None
-    tid = data[:2]
-    flags = b"\x81\x80"              # respuesta estándar, sin error
-    qd = data[4:6]
-    # localizar fin de la pregunta
-    i = 12
-    while i < len(data) and data[i] != 0:
-        i += 1 + data[i]
-    i += 1          # byte nulo
-    qtype_qclass = data[i:i + 4]
-    question = data[12:i + 4]
-    an_count = b"\x00\x01"
-    header = tid + flags + qd + an_count + b"\x00\x00" + b"\x00\x00"
-    # answer: puntero al nombre (0xc00c), tipo A, clase IN, TTL 30, len 4, IP
-    answer = (b"\xc0\x0c" + b"\x00\x01" + b"\x00\x01" + struct.pack(">I", 30)
-              + b"\x00\x04" + socket.inet_aton(answer_ip))
-    return header + question + answer
+    dns = pkt[DNS]
+    if dns.qr != 0 or dns.qd is None:
+        return None
+    qname = dns.qd.qname
+    eth = Ether(src=pkt[Ether].dst, dst=pkt[Ether].src)   # de nosotros al equipo
+    ip = IP(src=pkt[IP].dst, dst=pkt[IP].src)
+    udp = UDP(sport=pkt[UDP].dport, dport=pkt[UDP].sport)
+    rep = DNS(id=dns.id, qr=1, aa=1, qd=dns.qd,
+              an=DNSRR(rrname=qname, type="A", ttl=30, rdata=answer_ip))
+    return eth / ip / udp / rep
 
 
-class _DNSServer(threading.Thread):
-    def __init__(self, answer_ip: str, port: int = DNS_PORT):
+class _Sniffer(threading.Thread):
+    """Escucha consultas DNS de los equipos objetivo y las responde falsas."""
+
+    def __init__(self, own_ip: str, iface: Optional[str],
+                 active: Callable[[], set[str]]):
         super().__init__(daemon=True)
-        self.answer_ip = answer_ip
-        self.port = port
-        self._sock: Optional[socket.socket] = None
-        self._run = True
+        self.own_ip = own_ip
+        self.iface = iface
+        self.active = active
+        self._stop = False
+
+    def _cb(self, pkt):
+        try:
+            if DNS not in pkt or IP not in pkt:
+                return
+            if pkt[IP].src in self.active():
+                reply = build_dns_reply(pkt, self.own_ip)
+                if reply is not None:
+                    sendp(reply, iface=self.iface, verbose=False)
+        except Exception:
+            pass
 
     def run(self):
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind(("0.0.0.0", self.port))
-        self._sock.settimeout(1.0)
-        while self._run:
-            try:
-                data, addr = self._sock.recvfrom(1500)
-            except socket.timeout:
-                continue
-            except OSError:
-                break
-            resp = _dns_response(data, self.answer_ip)
-            if resp:
-                try:
-                    self._sock.sendto(resp, addr)
-                except OSError:
-                    pass
+        try:
+            sniff(filter="udp port 53", prn=self._cb, store=0,
+                  iface=self.iface, stop_filter=lambda p: self._stop)
+        except Exception:
+            pass
 
     def stop(self):
-        self._run = False
-        if self._sock:
-            try:
-                self._sock.close()
-            except OSError:
-                pass
-
-
-def _ipt(args: list[str]) -> bool:
-    try:
-        subprocess.run(["iptables", *args], check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except Exception:
-        return False
-
-
-def _ipt_ok(args: list[str]) -> bool:
-    return subprocess.run(["iptables", *args],
-                          stdout=subprocess.DEVNULL,
-                          stderr=subprocess.DEVNULL).returncode == 0
+        self._stop = True
 
 
 class Portal:
-    """Gestiona servidores de mensaje/DNS y las reglas iptables (Linux)."""
+    """Servidor de mensaje (HTTP) + spoofing de DNS para los equipos objetivo."""
 
-    def __init__(self, own_ip: str):
+    def __init__(self, own_ip: str, iface: Optional[str] = None):
         self.own_ip = own_ip
+        self.iface = iface
         self.dry_run = os.environ.get("DRY_RUN") == "1"
         self._http: Optional[ThreadingHTTPServer] = None
         self._http_thread: Optional[threading.Thread] = None
-        self._dns: Optional[_DNSServer] = None
-        self._active = False
+        self._sniffer: Optional[_Sniffer] = None
+        self._active_ips: set[str] = set()
+        self._lock = threading.Lock()
+        self.last_error: str = ""
 
     @staticmethod
     def available() -> bool:
-        """El portal con mensaje solo está soportado en Linux con iptables."""
-        if os.environ.get("DRY_RUN") == "1":
-            return False
-        if sys.platform != "linux":
-            return False
-        try:
-            subprocess.run(["iptables", "-V"], check=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return True
-        except Exception:
-            return False
+        """El mensaje funciona en cualquier SO con privilegios (no en simulación)."""
+        return os.environ.get("DRY_RUN") != "1"
 
-    # ---- servidores ----
-    def _ensure_servers(self):
+    def _active(self) -> set[str]:
+        with self._lock:
+            return set(self._active_ips)
+
+    def _ensure_running(self):
         if self._http is None:
-            self._http = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), _MsgHandler)
-            self._http_thread = threading.Thread(
-                target=self._http.serve_forever, daemon=True)
-            self._http_thread.start()
-        if self._dns is None:
-            self._dns = _DNSServer(self.own_ip)
-            self._dns.start()
+            try:
+                self._http = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), _MsgHandler)
+                self._http_thread = threading.Thread(
+                    target=self._http.serve_forever, daemon=True)
+                self._http_thread.start()
+            except Exception as e:
+                self.last_error = (
+                    f"No se pudo abrir el puerto {HTTP_PORT} para el mensaje "
+                    f"({e}). El bloqueo funciona igual, sin página de mensaje.")
+                self._http = None
+        if self._sniffer is None:
+            self._sniffer = _Sniffer(self.own_ip, self.iface, self._active)
+            self._sniffer.start()
 
-    def _stop_servers(self):
+    def _stop_running(self):
         if self._http:
             try:
                 self._http.shutdown()
             except Exception:
                 pass
             self._http = None
-        if self._dns:
-            self._dns.stop()
-            self._dns = None
-
-    # ---- iptables ----
-    def _set_forward(self, on: bool):
-        try:
-            with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
-                f.write("1" if on else "0")
-        except Exception:
-            pass
-
-    def _build_chains(self):
-        # crea/limpia nuestras cadenas y las enlaza una sola vez
-        _ipt(["-t", "nat", "-N", NAT_CHAIN])
-        _ipt(["-t", "nat", "-F", NAT_CHAIN])
-        if not _ipt_ok(["-t", "nat", "-C", "PREROUTING", "-j", NAT_CHAIN]):
-            _ipt(["-t", "nat", "-I", "PREROUTING", "-j", NAT_CHAIN])
-        _ipt(["-N", FWD_CHAIN])
-        _ipt(["-F", FWD_CHAIN])
-        if not _ipt_ok(["-C", "FORWARD", "-j", FWD_CHAIN]):
-            _ipt(["-I", "FORWARD", "-j", FWD_CHAIN])
-
-    def _teardown_chains(self):
-        _ipt(["-t", "nat", "-D", "PREROUTING", "-j", NAT_CHAIN])
-        _ipt(["-t", "nat", "-F", NAT_CHAIN])
-        _ipt(["-t", "nat", "-X", NAT_CHAIN])
-        _ipt(["-D", "FORWARD", "-j", FWD_CHAIN])
-        _ipt(["-F", FWD_CHAIN])
-        _ipt(["-X", FWD_CHAIN])
+        if self._sniffer:
+            self._sniffer.stop()
+            self._sniffer = None
 
     def reconcile(self, targets: dict[str, dict]):
-        """targets: ip -> {mac, message(str|'' ), source}. Reconstruye todo.
-
-        - equipos con mensaje: redirige 80/53 al portal y descarta el resto.
-        - equipos sin mensaje: descarta todo su tráfico reenviado.
-        """
-        if self.dry_run or not self.available():
-            return
-        any_portal = any(t.get("message") for t in targets.values())
-
-        if not targets:
-            if self._active:
-                self._teardown_chains()
-                self._set_forward(False)
-                self._stop_servers()
-                self._active = False
-            return
-
-        if any_portal:
-            self._ensure_servers()
-        self._set_forward(True)
-        self._build_chains()
-        self._active = True
-
-        msg_map = {}
-        for ip, t in targets.items():
-            if t.get("message"):
-                msg_map[ip] = t["message"]
-                _ipt(["-t", "nat", "-A", NAT_CHAIN, "-s", ip, "-p", "udp",
-                      "--dport", "53", "-j", "DNAT",
-                      "--to-destination", f"{self.own_ip}:{DNS_PORT}"])
-                _ipt(["-t", "nat", "-A", NAT_CHAIN, "-s", ip, "-p", "tcp",
-                      "--dport", "80", "-j", "DNAT",
-                      "--to-destination", f"{self.own_ip}:{HTTP_PORT}"])
-            # todo lo demás reenviado desde este equipo: descartar
-            _ipt(["-A", FWD_CHAIN, "-s", ip, "-j", "DROP"])
-        set_messages(msg_map)
-
-    def shutdown(self):
+        """targets: ip -> {mac, message, source}. Activa el mensaje donde haya."""
         if self.dry_run:
             return
-        if self._active:
-            self._teardown_chains()
-            self._set_forward(False)
-        self._stop_servers()
-        self._active = False
+        msg_map = {ip: t["message"] for ip, t in targets.items() if t.get("message")}
+        with self._lock:
+            self._active_ips = set(msg_map.keys())
+        set_messages(msg_map)
+        if msg_map:
+            self._ensure_running()
+        else:
+            self._stop_running()
+
+    def shutdown(self):
+        with self._lock:
+            self._active_ips = set()
+        set_messages({})
+        self._stop_running()

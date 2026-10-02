@@ -42,14 +42,33 @@ No necesita internet externo, ni cuentas, ni la nube: todo es local.
 
 ---
 
-## Instalación
+## 🪟 Guía rápida para Windows 11
+
+1. **Instala Python 3** desde [python.org](https://www.python.org/downloads/)
+   (marca la casilla *"Add Python to PATH"* durante la instalación).
+2. **Instala [Npcap](https://npcap.com/#download)** (necesario para que Scapy
+   envíe paquetes). Durante la instalación **marca "Install Npcap in WinPcap API-compatible Mode"**.
+3. Descarga este proyecto y, en su carpeta, abre **PowerShell** y ejecuta:
+   ```powershell
+   pip install -r requirements.txt
+   ```
+4. Abre el archivo **`iniciar_windows.bat`** con el Bloc de notas y cambia el
+   PIN (`set CONTROL_PIN=1234`) por uno tuyo. Guárdalo.
+5. **Doble clic en `iniciar_windows.bat`**. Windows pedirá permiso de
+   administrador (di que sí) — es necesario para controlar la red.
+6. La primera vez, Windows preguntará si permites la app en la red: elige
+   **Redes privadas → Permitir** (si no, el celular no podrá conectarse).
+7. En la ventana negra verás la dirección del panel, por ejemplo
+   `http://192.168.1.10:8080`. Ábrela en tu celular (mismo WiFi) e ingresa tu PIN.
+
+> Para cerrarlo: cierra la ventana negra. Al salir se **restaura la conexión**
+> de todos los equipos automáticamente.
+
+## Instalación (Linux / macOS)
 
 ```bash
 pip install -r requirements.txt
 ```
-
-En **Windows** instala además [Npcap](https://npcap.com/) (marca "WinPcap API
-compatible") para que Scapy pueda enviar paquetes.
 
 ## Uso
 
@@ -65,8 +84,8 @@ Cuando estés listo, en la red real (requiere privilegios):
 # Linux / macOS
 sudo CONTROL_PIN=1234 python3 control.py
 
-# Windows (PowerShell como administrador)
-$env:CONTROL_PIN="1234"; python control.py
+# Windows: usa iniciar_windows.bat (ver guía arriba), o en PowerShell como admin:
+#   $env:CONTROL_PIN="1234"; python control.py
 ```
 
 Verás en pantalla la IP del panel, por ejemplo `http://192.168.1.10:8080`.
@@ -113,12 +132,17 @@ En cada equipo (pestaña **Equipos**) hay un campo "💬 Mensaje". Lo escribes y
 guardas. Cuando ese equipo quede bloqueado, al abrir el navegador tu hijo verá
 una página con tu mensaje (ej. *"A dormir, mañana hay escuela 😴"*).
 
-> **Limitación honesta:** la página de mensaje requiere **Linux con iptables**
-> (redirige el tráfico HTTP del equipo a una página local). En **Windows/macOS**
-> el bloqueo funciona igual (corte total de internet), pero **sin** la página de
-> mensaje. Además, las webs **HTTPS** no mostrarán el mensaje (el navegador solo
-> dirá que no hay conexión); el mensaje aparece de forma más clara en el aviso de
-> *"iniciar sesión en la red"* del celular y en cualquier web `http://`.
+Funciona en **Windows, macOS y Linux** (usa spoofing de DNS con Scapy; no
+necesita iptables ni drivers extra además de Npcap en Windows).
+
+> **Limitaciones honestas:**
+> - Las webs **HTTPS** no mostrarán el mensaje (el navegador solo dirá que no hay
+>   conexión); el mensaje se ve claro en el aviso de *"iniciar sesión en la red"*
+>   del celular y en cualquier web `http://`.
+> - El mensaje usa el **puerto 80**. Si otro programa lo ocupa (ej. un servidor
+>   web local), el mensaje no se mostrará, pero el bloqueo seguirá funcionando.
+>   Puedes cambiarlo con la variable `CONTROL_PORTAL_PORT`, aunque el navegador
+>   del equipo abre el 80 por defecto, así que lo normal es dejarlo en 80.
 
 ## Cómo funciona el bloqueo (resumen honesto)
 
@@ -148,7 +172,7 @@ netcontrol/
   netutils.py           # detección de gateway/IP/MAC
   scanner.py            # descubrimiento de equipos
   blocker.py            # motor de bloqueo ARP (+ integración portal)
-  portal.py             # portal cautivo: mensaje personalizado (Linux)
+  portal.py             # portal cautivo: mensaje personalizado (multiplataforma)
   scheduler.py          # aplicación de horarios en segundo plano
   store.py              # persistencia (mensajes y horarios) en config.json
   webapp.py             # API + panel Flask
