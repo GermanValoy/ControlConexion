@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ControlConexion</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:system-ui,-apple-system,sans-serif;
+      background:#0f172a; color:#e2e8f0; padding-bottom:40px; }
+    header { position:sticky; top:0; background:#0f172acc; backdrop-filter:blur(8px);
+      padding:14px 16px; border-bottom:1px solid #1e293b; display:flex;
+      align-items:center; justify-content:space-between; gap:10px; z-index:10; }
+    header h1 { font-size:1.05rem; margin:0; }
+    .sub { font-size:.72rem; color:#94a3b8; }
+    .wrap { max-width:640px; margin:0 auto; padding:16px; }
+    .bar { display:flex; gap:8px; margin-bottom:14px; }
+    button { font:inherit; cursor:pointer; border:none; border-radius:10px; }
+    .btn { padding:10px 14px; background:#334155; color:#e2e8f0; font-weight:600; }
+    .btn.primary { background:#3b82f6; color:white; }
+    .dry { background:#f59e0b; color:#1f2937; font-weight:700; text-align:center;
+      padding:8px; border-radius:10px; margin-bottom:14px; font-size:.85rem; }
+    .card { background:#1e293b; border-radius:14px; padding:14px; margin-bottom:10px;
+      display:flex; align-items:center; gap:12px; }
+    .dot { width:10px; height:10px; border-radius:50%; flex:none; background:#22c55e; }
+    .info { flex:1; min-width:0; }
+    .name { font-weight:600; font-size:.98rem; overflow:hidden; text-overflow:ellipsis;
+      white-space:nowrap; }
+    .meta { font-size:.75rem; color:#94a3b8; margin-top:2px; }
+    .tag { font-size:.65rem; padding:2px 7px; border-radius:999px; margin-left:6px;
+      vertical-align:middle; }
+    .tag.gw { background:#1d4ed8; color:#dbeafe; }
+    .tag.me { background:#475569; color:#e2e8f0; }
+    .toggle { padding:10px 16px; font-weight:700; border-radius:10px; min-width:112px;
+      text-align:center; }
+    .toggle.block { background:#334155; color:#e2e8f0; }
+    .toggle.blocked { background:#dc2626; color:white; }
+    .toggle:disabled { opacity:.35; cursor:not-allowed; }
+    .empty { text-align:center; color:#64748b; padding:40px 0; }
+    a.logout { color:#94a3b8; font-size:.78rem; text-decoration:none; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>📡 ControlConexion</h1>
+      <div class="sub">Gateway {{ info.gateway_ip }} · {{ info.cidr }}</div>
+    </div>
+    <a class="logout" href="/logout">Salir</a>
+  </header>
+
+  <div class="wrap">
+    {% if dry_run %}<div class="dry">⚠️ MODO SIMULACIÓN — no se afecta la red real</div>{% endif %}
+    <div class="bar">
+      <button class="btn primary" id="scanBtn">🔄 Escanear</button>
+      <button class="btn" id="autoBtn">⏱️ Auto: ON</button>
+    </div>
+    <div id="list"><div class="empty">Cargando equipos…</div></div>
+  </div>
+
+  <script>
+    const list = document.getElementById('list');
+    const scanBtn = document.getElementById('scanBtn');
+    const autoBtn = document.getElementById('autoBtn');
+    let auto = true, timer = null;
+
+    function esc(s){ return (s||'').replace(/[&<>"]/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+    async function load(){
+      try {
+        const r = await fetch('/api/devices');
+        if(r.status===401){ location.href='/login'; return; }
+        const data = await r.json();
+        render(data.devices);
+      } catch(e){ /* red intermitente, reintenta en el próximo ciclo */ }
+    }
+
+    function render(devs){
+      if(!devs.length){ list.innerHTML='<div class="empty">Sin equipos.</div>'; return; }
+      list.innerHTML = devs.map(d => {
+        const title = esc(d.hostname || d.ip);
+        let tag = '';
+        if(d.is_gateway) tag = '<span class="tag gw">router</span>';
+        else if(d.is_self) tag = '<span class="tag me">este equipo</span>';
+        const vendor = esc(d.vendor || 'Fabricante desconocido');
+        let toggle;
+        if(!d.controllable){
+          toggle = '<button class="toggle block" disabled>—</button>';
+        } else if(d.blocked){
+          toggle = `<button class="toggle blocked" data-ip="${esc(d.ip)}" data-mac="${esc(d.mac)}" data-act="unblock">🚫 Bloqueado</button>`;
+        } else {
+          toggle = `<button class="toggle block" data-ip="${esc(d.ip)}" data-mac="${esc(d.mac)}" data-act="block">Habilitado</button>`;
+        }
+        const color = d.blocked ? '#dc2626' : '#22c55e';
+        return `<div class="card">
+          <span class="dot" style="background:${color}"></span>
+          <div class="info">
+            <div class="name">${title}${tag}</div>
+            <div class="meta">${esc(d.ip)} · ${esc(d.mac)} · ${vendor}</div>
+          </div>${toggle}</div>`;
+      }).join('');
+    }
+
+    list.addEventListener('click', async (e) => {
+      const b = e.target.closest('button[data-act]');
+      if(!b) return;
+      const act = b.dataset.act;
+      b.disabled = true; b.textContent = '…';
+      await fetch('/api/'+act, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ip:b.dataset.ip, mac:b.dataset.mac})
+      });
+      load();
+    });
+
+    scanBtn.addEventListener('click', async () => {
+      scanBtn.disabled = true; scanBtn.textContent='Escaneando…';
+      await fetch('/api/scan', {method:'POST'});
+      await load();
+      scanBtn.disabled = false; scanBtn.textContent='🔄 Escanear';
+    });
+
+    autoBtn.addEventListener('click', () => {
+      auto = !auto;
+      autoBtn.textContent = '⏱️ Auto: ' + (auto?'ON':'OFF');
+      setupTimer();
+    });
+    function setupTimer(){ clearInterval(timer); if(auto) timer=setInterval(load,5000); }
+
+    load(); setupTimer();
+  </script>
+</body>
+</html>
