@@ -8,6 +8,12 @@ Pensado para el caso en que **no tienes acceso admin al módem ni router propio*
 el bloqueo se hace por **ARP spoofing** dirigido a los equipos que tú elijas
 (la misma técnica de apps tipo *NetCut*).
 
+**Incluye:**
+- 📶 Monitoreo y bloqueo/habilitación de cada equipo con un toque.
+- ⏰ **Horarios** que activas/desactivas cuando quieras (ej. "tablet, lun–vie 22:00–06:00").
+- 💬 **Mensaje personalizado**: cuando un equipo está bloqueado, tu hijo ve tu
+  mensaje al abrir el navegador (portal cautivo — ver limitación abajo).
+
 > ⚠️ **Uso legítimo:** esto es para TU red y TUS dispositivos. Usarlo en redes
 > ajenas es ilegal. La técnica ARP es "ruidosa" y puede afectar la estabilidad
 > de la red; es la única opción cuando no controlas el gateway.
@@ -89,6 +95,31 @@ Verás en pantalla la IP del panel, por ejemplo `http://192.168.1.10:8080`.
 
 ---
 
+## Horarios ⏰
+
+En la pestaña **Horarios** del panel:
+1. Elige el equipo, ponle un nombre, marca los **días** y el rango **Desde/Hasta**
+   (admite rangos que cruzan la medianoche, ej. 22:00–06:00).
+2. Opcional: escribe un **mensaje** para ese horario.
+3. Cada horario tiene un **interruptor** para activarlo o desactivarlo cuando quieras,
+   sin borrarlo. Queda guardado aunque reinicies el programa.
+
+Los bloqueos manuales y los de horario no se pisan: si bloqueas algo a mano, el
+horario no lo libera, y al terminar un horario solo se libera lo que él bloqueó.
+
+## Mensaje personalizado 💬
+
+En cada equipo (pestaña **Equipos**) hay un campo "💬 Mensaje". Lo escribes y
+guardas. Cuando ese equipo quede bloqueado, al abrir el navegador tu hijo verá
+una página con tu mensaje (ej. *"A dormir, mañana hay escuela 😴"*).
+
+> **Limitación honesta:** la página de mensaje requiere **Linux con iptables**
+> (redirige el tráfico HTTP del equipo a una página local). En **Windows/macOS**
+> el bloqueo funciona igual (corte total de internet), pero **sin** la página de
+> mensaje. Además, las webs **HTTPS** no mostrarán el mensaje (el navegador solo
+> dirá que no hay conexión); el mensaje aparece de forma más clara en el aviso de
+> *"iniciar sesión en la red"* del celular y en cualquier web `http://`.
+
 ## Cómo funciona el bloqueo (resumen honesto)
 
 Al bloquear un equipo, el programa le envía anuncios ARP falsos diciéndole que
@@ -116,9 +147,12 @@ control.py              # arranque
 netcontrol/
   netutils.py           # detección de gateway/IP/MAC
   scanner.py            # descubrimiento de equipos
-  blocker.py            # motor de bloqueo ARP
+  blocker.py            # motor de bloqueo ARP (+ integración portal)
+  portal.py             # portal cautivo: mensaje personalizado (Linux)
+  scheduler.py          # aplicación de horarios en segundo plano
+  store.py              # persistencia (mensajes y horarios) en config.json
   webapp.py             # API + panel Flask
 templates/
-  index.html            # panel (móvil)
+  index.html            # panel móvil (pestañas Equipos / Horarios)
   login.html            # acceso por PIN
 ```

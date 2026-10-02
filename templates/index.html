@@ -15,30 +15,62 @@
     header h1 { font-size:1.05rem; margin:0; }
     .sub { font-size:.72rem; color:#94a3b8; }
     .wrap { max-width:640px; margin:0 auto; padding:16px; }
-    .bar { display:flex; gap:8px; margin-bottom:14px; }
+    .tabs { display:flex; gap:8px; margin-bottom:14px; }
+    .tab { flex:1; padding:11px; text-align:center; border-radius:10px;
+      background:#1e293b; color:#94a3b8; font-weight:600; cursor:pointer; border:none;
+      font:inherit; }
+    .tab.active { background:#3b82f6; color:white; }
     button { font:inherit; cursor:pointer; border:none; border-radius:10px; }
     .btn { padding:10px 14px; background:#334155; color:#e2e8f0; font-weight:600; }
     .btn.primary { background:#3b82f6; color:white; }
+    .bar { display:flex; gap:8px; margin-bottom:14px; }
+    .note { background:#f59e0b22; border:1px solid #f59e0b55; color:#fcd34d;
+      padding:10px 12px; border-radius:10px; margin-bottom:14px; font-size:.8rem; }
     .dry { background:#f59e0b; color:#1f2937; font-weight:700; text-align:center;
       padding:8px; border-radius:10px; margin-bottom:14px; font-size:.85rem; }
-    .card { background:#1e293b; border-radius:14px; padding:14px; margin-bottom:10px;
-      display:flex; align-items:center; gap:12px; }
+    .card { background:#1e293b; border-radius:14px; padding:14px; margin-bottom:10px; }
+    .row { display:flex; align-items:center; gap:12px; }
     .dot { width:10px; height:10px; border-radius:50%; flex:none; background:#22c55e; }
     .info { flex:1; min-width:0; }
     .name { font-weight:600; font-size:.98rem; overflow:hidden; text-overflow:ellipsis;
       white-space:nowrap; }
     .meta { font-size:.75rem; color:#94a3b8; margin-top:2px; }
-    .tag { font-size:.65rem; padding:2px 7px; border-radius:999px; margin-left:6px;
-      vertical-align:middle; }
+    .tag { font-size:.65rem; padding:2px 7px; border-radius:999px; margin-left:6px; }
     .tag.gw { background:#1d4ed8; color:#dbeafe; }
     .tag.me { background:#475569; color:#e2e8f0; }
-    .toggle { padding:10px 16px; font-weight:700; border-radius:10px; min-width:112px;
+    .tag.sch { background:#7c3aed; color:#ede9fe; }
+    .toggle { padding:10px 14px; font-weight:700; border-radius:10px; min-width:112px;
       text-align:center; }
     .toggle.block { background:#334155; color:#e2e8f0; }
     .toggle.blocked { background:#dc2626; color:white; }
     .toggle:disabled { opacity:.35; cursor:not-allowed; }
+    .msgline { margin-top:10px; display:flex; gap:8px; align-items:center; }
+    .msgline input { flex:1; padding:9px 10px; border-radius:9px; border:1px solid #334155;
+      background:#0f172a; color:#e2e8f0; font-size:.85rem; }
+    .msgline .save { background:#16a34a; color:white; padding:9px 12px; }
     .empty { text-align:center; color:#64748b; padding:40px 0; }
     a.logout { color:#94a3b8; font-size:.78rem; text-decoration:none; }
+    label { font-size:.8rem; color:#cbd5e1; display:block; margin:10px 0 4px; }
+    select,input[type=time],input[type=text]{ width:100%; padding:10px;
+      border-radius:9px; border:1px solid #334155; background:#0f172a; color:#e2e8f0;
+      font:inherit; }
+    .days { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
+    .day { flex:1; min-width:40px; text-align:center; padding:9px 0; border-radius:9px;
+      background:#0f172a; border:1px solid #334155; font-size:.8rem; cursor:pointer;
+      user-select:none; }
+    .day.on { background:#3b82f6; border-color:#3b82f6; color:white; }
+    .times { display:flex; gap:10px; }
+    .times>div{ flex:1; }
+    .sw { position:relative; width:46px; height:26px; flex:none; }
+    .sw input{ display:none; }
+    .sw span{ position:absolute; inset:0; background:#475569; border-radius:999px;
+      transition:.2s; }
+    .sw span::before{ content:""; position:absolute; width:20px; height:20px; left:3px;
+      top:3px; background:white; border-radius:50%; transition:.2s; }
+    .sw input:checked + span{ background:#16a34a; }
+    .sw input:checked + span::before{ transform:translateX(20px); }
+    .del { background:#7f1d1d; color:#fecaca; padding:8px 12px; }
+    .hide { display:none; }
   </style>
 </head>
 <body>
@@ -52,31 +84,79 @@
 
   <div class="wrap">
     {% if dry_run %}<div class="dry">⚠️ MODO SIMULACIÓN — no se afecta la red real</div>{% endif %}
-    <div class="bar">
-      <button class="btn primary" id="scanBtn">🔄 Escanear</button>
-      <button class="btn" id="autoBtn">⏱️ Auto: ON</button>
+    {% if not portal_ok and not dry_run %}
+    <div class="note">ℹ️ El mensaje personalizado requiere Linux (con iptables).
+      En este sistema el bloqueo funciona igual (corte total), pero sin la página de mensaje.</div>
+    {% endif %}
+
+    <div class="tabs">
+      <button class="tab active" data-tab="devices">📶 Equipos</button>
+      <button class="tab" data-tab="schedules">⏰ Horarios</button>
     </div>
-    <div id="list"><div class="empty">Cargando equipos…</div></div>
+
+    <!-- TAB EQUIPOS -->
+    <section id="tab-devices">
+      <div class="bar">
+        <button class="btn primary" id="scanBtn">🔄 Escanear</button>
+        <button class="btn" id="autoBtn">⏱️ Auto: ON</button>
+      </div>
+      <div id="list"><div class="empty">Cargando equipos…</div></div>
+    </section>
+
+    <!-- TAB HORARIOS -->
+    <section id="tab-schedules" class="hide">
+      <div class="card">
+        <div class="name" style="margin-bottom:6px">➕ Nuevo horario</div>
+        <label>Equipo</label>
+        <select id="s_dev"></select>
+        <label>Nombre</label>
+        <input type="text" id="s_name" placeholder="Ej. Hora de dormir">
+        <label>Días</label>
+        <div class="days" id="s_days"></div>
+        <label>Horario</label>
+        <div class="times">
+          <div><div class="meta">Desde</div><input type="time" id="s_start" value="22:00"></div>
+          <div><div class="meta">Hasta</div><input type="time" id="s_end" value="06:00"></div>
+        </div>
+        <label>Mensaje (opcional)</label>
+        <input type="text" id="s_msg" placeholder="Ej. A dormir, mañana hay escuela 😴">
+        <button class="btn primary" id="s_add" style="width:100%;margin-top:14px">Crear horario</button>
+      </div>
+      <div id="schedlist"></div>
+    </section>
   </div>
 
   <script>
+    const DAYS = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
     const list = document.getElementById('list');
+    const schedlist = document.getElementById('schedlist');
     const scanBtn = document.getElementById('scanBtn');
     const autoBtn = document.getElementById('autoBtn');
-    let auto = true, timer = null;
+    let auto = true, timer = null, devicesCache = [], selDays = new Set();
 
     function esc(s){ return (s||'').replace(/[&<>"]/g, c =>
       ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+    // ---- tabs ----
+    document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+      document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+      t.classList.add('active');
+      const tab = t.dataset.tab;
+      document.getElementById('tab-devices').classList.toggle('hide', tab!=='devices');
+      document.getElementById('tab-schedules').classList.toggle('hide', tab!=='schedules');
+      if(tab==='schedules'){ fillDeviceSelect(); loadSchedules(); }
+    });
+
+    // ---- equipos ----
     async function load(){
       try {
         const r = await fetch('/api/devices');
         if(r.status===401){ location.href='/login'; return; }
         const data = await r.json();
+        devicesCache = data.devices;
         render(data.devices);
-      } catch(e){ /* red intermitente, reintenta en el próximo ciclo */ }
+      } catch(e){}
     }
-
     function render(devs){
       if(!devs.length){ list.innerHTML='<div class="empty">Sin equipos.</div>'; return; }
       list.innerHTML = devs.map(d => {
@@ -84,6 +164,7 @@
         let tag = '';
         if(d.is_gateway) tag = '<span class="tag gw">router</span>';
         else if(d.is_self) tag = '<span class="tag me">este equipo</span>';
+        else if(d.blocked && d.block_source==='schedule') tag = '<span class="tag sch">por horario</span>';
         const vendor = esc(d.vendor || 'Fabricante desconocido');
         let toggle;
         if(!d.controllable){
@@ -94,42 +175,116 @@
           toggle = `<button class="toggle block" data-ip="${esc(d.ip)}" data-mac="${esc(d.mac)}" data-act="block">Habilitado</button>`;
         }
         const color = d.blocked ? '#dc2626' : '#22c55e';
+        const msg = d.controllable ? `
+          <div class="msgline">
+            <input type="text" placeholder="💬 Mensaje para este equipo" value="${esc(d.message)}" data-msgmac="${esc(d.mac)}">
+            <button class="save" data-savemac="${esc(d.mac)}">Guardar</button>
+          </div>` : '';
         return `<div class="card">
-          <span class="dot" style="background:${color}"></span>
-          <div class="info">
-            <div class="name">${title}${tag}</div>
-            <div class="meta">${esc(d.ip)} · ${esc(d.mac)} · ${vendor}</div>
-          </div>${toggle}</div>`;
+          <div class="row">
+            <span class="dot" style="background:${color}"></span>
+            <div class="info">
+              <div class="name">${title}${tag}</div>
+              <div class="meta">${esc(d.ip)} · ${esc(d.mac)} · ${vendor}</div>
+            </div>${toggle}
+          </div>${msg}</div>`;
       }).join('');
     }
 
     list.addEventListener('click', async (e) => {
       const b = e.target.closest('button[data-act]');
-      if(!b) return;
-      const act = b.dataset.act;
-      b.disabled = true; b.textContent = '…';
-      await fetch('/api/'+act, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ip:b.dataset.ip, mac:b.dataset.mac})
-      });
-      load();
+      if(b){
+        const act = b.dataset.act;
+        b.disabled = true; b.textContent = '…';
+        await fetch('/api/'+act, {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ip:b.dataset.ip, mac:b.dataset.mac})});
+        load(); return;
+      }
+      const s = e.target.closest('button[data-savemac]');
+      if(s){
+        const mac = s.dataset.savemac;
+        const input = list.querySelector(`input[data-msgmac="${CSS.escape(mac)}"]`);
+        s.disabled = true; s.textContent='…';
+        await fetch('/api/message', {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({mac, message: input.value})});
+        s.textContent='✓'; setTimeout(()=>{ s.disabled=false; s.textContent='Guardar'; }, 1000);
+      }
     });
 
-    scanBtn.addEventListener('click', async () => {
-      scanBtn.disabled = true; scanBtn.textContent='Escaneando…';
-      await fetch('/api/scan', {method:'POST'});
-      await load();
-      scanBtn.disabled = false; scanBtn.textContent='🔄 Escanear';
-    });
-
-    autoBtn.addEventListener('click', () => {
-      auto = !auto;
-      autoBtn.textContent = '⏱️ Auto: ' + (auto?'ON':'OFF');
-      setupTimer();
-    });
+    scanBtn.onclick = async () => {
+      scanBtn.disabled=true; scanBtn.textContent='Escaneando…';
+      await fetch('/api/scan', {method:'POST'}); await load();
+      scanBtn.disabled=false; scanBtn.textContent='🔄 Escanear';
+    };
+    autoBtn.onclick = () => { auto=!auto; autoBtn.textContent='⏱️ Auto: '+(auto?'ON':'OFF'); setupTimer(); };
     function setupTimer(){ clearInterval(timer); if(auto) timer=setInterval(load,5000); }
 
-    load(); setupTimer();
+    // ---- horarios ----
+    function fillDeviceSelect(){
+      const sel = document.getElementById('s_dev');
+      const ctrl = devicesCache.filter(d=>d.controllable);
+      sel.innerHTML = ctrl.map(d =>
+        `<option value="${esc(d.mac)}" data-ip="${esc(d.ip)}">${esc(d.hostname||d.ip)} (${esc(d.ip)})</option>`
+      ).join('') || '<option value="">(escanea primero)</option>';
+    }
+    function buildDays(){
+      const c = document.getElementById('s_days');
+      c.innerHTML = DAYS.map((d,i)=>`<div class="day" data-d="${i}">${d}</div>`).join('');
+      c.querySelectorAll('.day').forEach(el=> el.onclick=()=>{
+        const i=+el.dataset.d;
+        if(selDays.has(i)){ selDays.delete(i); el.classList.remove('on'); }
+        else { selDays.add(i); el.classList.add('on'); }
+      });
+    }
+    async function loadSchedules(){
+      const r = await fetch('/api/schedules');
+      if(r.status===401){ location.href='/login'; return; }
+      const {schedules} = await r.json();
+      if(!schedules.length){ schedlist.innerHTML='<div class="empty">Sin horarios.</div>'; return; }
+      schedlist.innerHTML = schedules.map(s=>{
+        const days = s.days.map(i=>DAYS[i]).join(' ');
+        return `<div class="card"><div class="row">
+          <div class="info">
+            <div class="name">${esc(s.name)}</div>
+            <div class="meta">${esc(s.mac)} · ${days||'(sin días)'} · ${esc(s.start)}–${esc(s.end)}</div>
+            ${s.message?`<div class="meta">💬 ${esc(s.message)}</div>`:''}
+          </div>
+          <label class="sw"><input type="checkbox" ${s.enabled?'checked':''} data-tgl="${s.id}"><span></span></label>
+        </div>
+        <div style="margin-top:10px;text-align:right">
+          <button class="del" data-del="${s.id}">Eliminar</button>
+        </div></div>`;
+      }).join('');
+    }
+    schedlist.addEventListener('change', async e=>{
+      const t = e.target.closest('input[data-tgl]');
+      if(t){ await fetch('/api/schedules/toggle',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:t.dataset.tgl, enabled:t.checked})}); }
+    });
+    schedlist.addEventListener('click', async e=>{
+      const d = e.target.closest('button[data-del]');
+      if(d){ await fetch('/api/schedules/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:d.dataset.del})}); loadSchedules(); }
+    });
+    document.getElementById('s_add').onclick = async ()=>{
+      const sel = document.getElementById('s_dev');
+      const opt = sel.selectedOptions[0];
+      if(!opt || !opt.value){ alert('Escanea y elige un equipo primero.'); return; }
+      const body = {
+        name: document.getElementById('s_name').value || 'Horario',
+        mac: opt.value, ip: opt.dataset.ip,
+        days: [...selDays], start: document.getElementById('s_start').value,
+        end: document.getElementById('s_end').value,
+        message: document.getElementById('s_msg').value, enabled:true,
+      };
+      await fetch('/api/schedules',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(body)});
+      document.getElementById('s_name').value=''; document.getElementById('s_msg').value='';
+      selDays.clear(); buildDays();
+      loadSchedules();
+    };
+
+    buildDays(); load(); setupTimer();
   </script>
 </body>
 </html>

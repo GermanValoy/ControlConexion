@@ -24,10 +24,15 @@ def main():
 
     app = create_app()
     blocker = app.config["BLOCKER"]
+    scheduler = app.config["SCHEDULER"]
     info = app.config["NETINFO"]
 
-    # Al salir: restaurar la conexión de TODOS los equipos bloqueados.
-    atexit.register(blocker.shutdown)
+    def cleanup():
+        scheduler.stop()
+        blocker.shutdown()
+
+    # Al salir: detener horarios y restaurar la conexión de TODOS los equipos.
+    atexit.register(cleanup)
 
     banner(info, blocker.dry_run, port)
     try:
@@ -35,7 +40,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        blocker.shutdown()
+        cleanup()
 
 
 def banner(info, dry_run, port):
