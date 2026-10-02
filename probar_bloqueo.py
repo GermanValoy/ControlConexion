@@ -79,24 +79,72 @@ def main():
     blk.start()
     blk.block(target, mac)
 
+    # Detector: ¿el equipo nos está enviando su tráfico de internet?
+    # Si sí -> el engaño ARP funciona. Si no -> el equipo ignora el engaño.
+    import threading
+    from scapy.all import sniff, IP, Ether
+
+    contador = {"internet": 0}
+    own_mac = info.own_mac.lower()
+    net_prefix = ".".join(target.split(".")[:3]) + "."
+
+    def on_pkt(pkt):
+        try:
+            if Ether in pkt and IP in pkt and pkt[Ether].src.lower() == mac.lower():
+                # tráfico del objetivo que llega a NUESTRA tarjeta...
+                if pkt[Ether].dst.lower() == own_mac:
+                    dst = pkt[IP].dst
+                    # ...con destino FUERA de la red local = internet
+                    if not dst.startswith(net_prefix):
+                        contador["internet"] += 1
+        except Exception:
+            pass
+
+    stop = threading.Event()
+    def sniffer():
+        try:
+            sniff(prn=on_pkt, store=0, iface=info.iface,
+                  filter=f"ip and ether src {mac}",
+                  stop_filter=lambda p: stop.is_set())
+        except Exception as e:
+            print(f"  (no se pudo escuchar: {e})")
+
+    th = threading.Thread(target=sniffer, daemon=True)
+    th.start()
+
+    SEG = 20
     print()
-    print("  >>> BLOQUEANDO durante 60 segundos.")
-    print("  >>> Ve a ESE equipo y abre una web o YouTube: debería quedarse SIN internet.")
+    print(f"  >>> BLOQUEANDO {SEG}s. En ESE equipo, abre una web o YouTube AHORA.")
     print()
     try:
-        for i in range(60):
-            print(f"      enviando paquetes de bloqueo...  {i + 1}/60", end="\r")
+        for i in range(SEG):
+            print(f"      probando...  {i + 1}/{SEG}   "
+                  f"paquetes del equipo recibidos: {contador['internet']}", end="\r")
             time.sleep(1)
     except KeyboardInterrupt:
         pass
+    stop.set()
 
     print("\n\n  >>> Restaurando la conexión del equipo...")
     blk.unblock(target)
     blk.shutdown()
     time.sleep(1)
-    print("  Listo. El equipo debería recuperar internet en unos segundos.")
+
+    print("\n" + "=" * 56)
+    print(" RESULTADO")
+    print("=" * 56)
+    if contador["internet"] > 0:
+        print(f"  ✅ El equipo SÍ nos envió su tráfico ({contador['internet']} paquetes).")
+        print("     El engaño ARP FUNCIONA. Si aún tuvo internet, es porque el")
+        print("     reenvío de IP sigue activo. Ejecuta en PowerShell admin:")
+        print("       Set-NetIPInterface -Forwarding Disabled")
+        print("     y reinicia la PC si hace falta.")
+    else:
+        print("  ❌ El equipo NO nos envió nada: está IGNORANDO el engaño ARP.")
+        print("     Posibles causas: el dispositivo/módem tiene protección ARP,")
+        print("     o el equipo usa IP fija con ARP estático.")
+        print("     Cuéntame esto para buscar alternativa.")
     print()
-    print("  ¿Perdió internet durante la prueba?  SÍ = funciona.  NO = cuéntame.")
     return 0
 
 

