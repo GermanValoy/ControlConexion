@@ -44,6 +44,7 @@ def scan(info: netutils.NetInfo, timeout: float = 3.0,
     ans, _ = srp(
         Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=info.cidr),
         timeout=timeout,
+        iface=info.iface,
         verbose=False,
     )
     devices: list[Device] = []

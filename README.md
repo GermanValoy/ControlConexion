@@ -158,6 +158,30 @@ Limitaciones a tener en cuenta:
 - La solución realmente estable es controlar el gateway (admin del módem o un
   router/Raspberry Pi propio). Si algún día consigues eso, es el camino recomendado.
 
+## 🔧 Solución de problemas
+
+### "Solo veo mi ordenador" (no aparecen los demás equipos)
+
+Casi siempre es porque Scapy usó la **tarjeta de red equivocada** (común con
+VPN, VirtualBox o WSL instalados). Haz esto:
+
+1. Ejecuta el **diagnóstico**: doble clic en `diagnostico_windows.bat`
+   (o `sudo python3 diagnostico.py` en Linux/Mac).
+2. Mira la lista: te dirá cuántos equipos ve por cada tarjeta y **cuál es la
+   correcta** (la que encuentra más de 1 equipo).
+3. Fuerza esa tarjeta al arrancar. En `iniciar_windows.bat`, añade una línea
+   con el nombre que te indicó el diagnóstico, por ejemplo:
+   ```
+   set CONTROL_IFACE=Wi-Fi
+   ```
+   (en Linux/Mac: `CONTROL_IFACE="wlan0" sudo -E python3 control.py`).
+
+Otras causas:
+- **Npcap no instalado** o sin el modo *"WinPcap API-compatible"* → reinstálalo.
+- No lo ejecutaste **como administrador** → usa el `.bat` (se eleva solo).
+- Algunos puntos de acceso con *"aislamiento de clientes"* (AP isolation)
+  impiden ver otros equipos; es una opción del WiFi, poco común en casa.
+
 ## Seguridad y responsabilidad
 
 - Úsalo **solo en tu red**.

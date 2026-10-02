@@ -41,13 +41,15 @@ def guess_cidr(own_ip: str, prefix: int = 24) -> str:
     return str(net)
 
 
-def get_mac(ip: str, timeout: float = 2.0, retry: int = 2) -> Optional[str]:
+def get_mac(ip: str, timeout: float = 2.0, retry: int = 2,
+            iface: Optional[str] = None) -> Optional[str]:
     """Resuelve la MAC de una IP mediante una petición ARP."""
     try:
         ans, _ = srp(
             Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=ip),
             timeout=timeout,
             retry=retry,
+            iface=iface,
             verbose=False,
         )
         for _, rcv in ans:
@@ -59,18 +61,33 @@ def get_mac(ip: str, timeout: float = 2.0, retry: int = 2) -> Optional[str]:
     return None
 
 
+def _valid_ip(ip: Optional[str]) -> bool:
+    return bool(ip) and ip not in ("0.0.0.0", "127.0.0.1")
+
+
 def collect(prefix: int = 24) -> NetInfo:
     """Reúne toda la información de red necesaria para operar."""
-    iface, own_ip, gateway_ip = detect_gateway()
+    import os
+    iface, route_ip, gateway_ip = detect_gateway()
+    # Permite forzar la interfaz manualmente si la detección automática falla
+    # (común en Windows con VPN/VirtualBox/WSL): CONTROL_IFACE="Wi-Fi"
+    forced = os.environ.get("CONTROL_IFACE")
+    if forced:
+        iface = forced
     try:
         own_mac = get_if_hwaddr(iface)
     except Exception:
         own_mac = get_if_hwaddr(conf.iface)
+    # La IP de la ruta hacia el gateway es la más fiable; solo la sustituimos
+    # por la de la interfaz si esta es válida (en Windows a veces da 0.0.0.0).
+    own_ip = route_ip
     try:
-        own_ip = get_if_addr(iface) or own_ip
+        a = get_if_addr(iface)
+        if _valid_ip(a):
+            own_ip = a
     except Exception:
         pass
-    gateway_mac = get_mac(gateway_ip)
+    gateway_mac = get_mac(gateway_ip, iface=iface)
     return NetInfo(
         iface=iface,
         own_ip=own_ip,

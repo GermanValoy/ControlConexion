@@ -20,7 +20,7 @@ import threading
 import time
 from typing import Optional
 
-from scapy.all import ARP, send
+from scapy.all import ARP, Ether, sendp
 
 from . import netutils
 from .portal import Portal
@@ -121,31 +121,28 @@ class Blocker:
                 self._poison_once(ip, mac)
             self._stop.wait(POISON_INTERVAL)
 
+    def _send(self, dst_mac: str, pkt):
+        # Envío a nivel de enlace (L2) por la interfaz correcta: más fiable en
+        # Windows (Npcap) que el envío L3 para paquetes ARP.
+        sendp(Ether(dst=dst_mac) / pkt, iface=self.info.iface, verbose=False)
+
     def _poison_once(self, ip: str, mac: str):
-        send(
-            ARP(op=2, pdst=ip, hwdst=mac,
-                psrc=self.info.gateway_ip, hwsrc=self.info.own_mac),
-            verbose=False,
-        )
+        self._send(mac, ARP(op=2, pdst=ip, hwdst=mac,
+                            psrc=self.info.gateway_ip, hwsrc=self.info.own_mac))
         if self.info.gateway_mac:
-            send(
-                ARP(op=2, pdst=self.info.gateway_ip, hwdst=self.info.gateway_mac,
-                    psrc=ip, hwsrc=self.info.own_mac),
-                verbose=False,
-            )
+            self._send(self.info.gateway_mac,
+                       ARP(op=2, pdst=self.info.gateway_ip,
+                           hwdst=self.info.gateway_mac,
+                           psrc=ip, hwsrc=self.info.own_mac))
 
     def _restore(self, ip: str, mac: str):
         if not self.info.gateway_mac:
             return
-        pkt_to_target = ARP(
-            op=2, pdst=ip, hwdst="ff:ff:ff:ff:ff:ff",
-            psrc=self.info.gateway_ip, hwsrc=self.info.gateway_mac,
-        )
-        pkt_to_gateway = ARP(
-            op=2, pdst=self.info.gateway_ip, hwdst="ff:ff:ff:ff:ff:ff",
-            psrc=ip, hwsrc=mac,
-        )
         for _ in range(RESTORE_ROUNDS):
-            send(pkt_to_target, verbose=False)
-            send(pkt_to_gateway, verbose=False)
+            self._send("ff:ff:ff:ff:ff:ff",
+                       ARP(op=2, pdst=ip, hwdst="ff:ff:ff:ff:ff:ff",
+                           psrc=self.info.gateway_ip, hwsrc=self.info.gateway_mac))
+            self._send("ff:ff:ff:ff:ff:ff",
+                       ARP(op=2, pdst=self.info.gateway_ip, hwdst="ff:ff:ff:ff:ff:ff",
+                           psrc=ip, hwsrc=mac))
             time.sleep(0.2)
