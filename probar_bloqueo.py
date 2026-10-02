@@ -15,7 +15,7 @@ import sys
 import time
 
 from netcontrol import netutils
-from netcontrol.blocker import Blocker
+from netcontrol.blocker import Blocker, disable_ip_forwarding
 
 
 def comprobar_forwarding():
@@ -49,6 +49,8 @@ def main():
     print("=" * 56)
 
     comprobar_forwarding()
+    print("  Desactivando reenvío de IP (necesario para que corte)...")
+    disable_ip_forwarding()
 
     try:
         info = netutils.collect()

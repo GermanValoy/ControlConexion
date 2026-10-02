@@ -6,8 +6,11 @@ Para cortar la salida a internet de UN equipo, se envenena su caché ARP
 diciéndole que el gateway está en la MAC de ESTA máquina.
 
 - Sin mensaje: no se reenvía su tráfico -> queda sin internet.
-- Con mensaje (solo Linux): el portal cautivo redirige su navegador a una
-  página con el mensaje personalizado (ver portal.py).
+- Con mensaje: el portal cautivo redirige su navegador a una página con el
+  mensaje personalizado (ver portal.py).
+
+Requisito: el reenvío de IP debe estar DESACTIVADO (si no, la PC reenviaría el
+tráfico y no se cortaría nada). El motor lo desactiva al arrancar.
 
 Al desbloquear o salir se restaura la caché ARP con las MAC correctas.
 
@@ -16,6 +19,8 @@ Uso previsto: tu propia red doméstica (control parental).
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import threading
 import time
 from typing import Optional
@@ -25,8 +30,33 @@ from scapy.all import ARP, Ether, sendp
 from . import netutils
 from .portal import Portal
 
-POISON_INTERVAL = 2.0   # segundos entre reenvíos del engaño
+POISON_INTERVAL = 1.0   # segundos entre reenvíos del engaño
+POISON_BURST = 2        # paquetes por ronda (mejor contra re-anuncios del router)
 RESTORE_ROUNDS = 5      # paquetes de restauración al desbloquear
+
+
+def disable_ip_forwarding() -> bool:
+    """Apaga el reenvío de IP. Si está activo, el bloqueo NO funciona porque
+    la PC reenviaría el tráfico del equipo al router en vez de descartarlo."""
+    try:
+        if sys.platform == "win32":
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Set-NetIPInterface -Forwarding Disabled -ErrorAction SilentlyContinue"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 r"Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters' "
+                 r"-Name IPEnableRouter -Value 0 -ErrorAction SilentlyContinue"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=25)
+            return True
+        if sys.platform.startswith("linux"):
+            with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
+                f.write("0")
+            return True
+    except Exception:
+        pass
+    return False
 
 
 class Blocker:
@@ -46,6 +76,8 @@ class Blocker:
             return
         if self._thread and self._thread.is_alive():
             return
+        # Clave: sin esto, Windows reenvía el tráfico y el bloqueo no corta nada.
+        disable_ip_forwarding()
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -127,13 +159,16 @@ class Blocker:
         sendp(Ether(dst=dst_mac) / pkt, iface=self.info.iface, verbose=False)
 
     def _poison_once(self, ip: str, mac: str):
-        self._send(mac, ARP(op=2, pdst=ip, hwdst=mac,
-                            psrc=self.info.gateway_ip, hwsrc=self.info.own_mac))
-        if self.info.gateway_mac:
-            self._send(self.info.gateway_mac,
-                       ARP(op=2, pdst=self.info.gateway_ip,
-                           hwdst=self.info.gateway_mac,
-                           psrc=ip, hwsrc=self.info.own_mac))
+        for _ in range(POISON_BURST):
+            # Al objetivo: "el router soy yo"
+            self._send(mac, ARP(op=2, pdst=ip, hwdst=mac,
+                                psrc=self.info.gateway_ip, hwsrc=self.info.own_mac))
+            # Al router: "ese equipo soy yo" (corte bidireccional)
+            if self.info.gateway_mac:
+                self._send(self.info.gateway_mac,
+                           ARP(op=2, pdst=self.info.gateway_ip,
+                               hwdst=self.info.gateway_mac,
+                               psrc=ip, hwsrc=self.info.own_mac))
 
     def _restore(self, ip: str, mac: str):
         if not self.info.gateway_mac:
